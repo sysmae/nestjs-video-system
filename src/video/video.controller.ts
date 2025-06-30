@@ -69,7 +69,7 @@ export class VideoController {
           errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
         }),
     )
-    file: Express.Multer.File,
+    file: any, // Multer 파일 객체
     @Body() createVideoReqDto: CreateVideoReqDto,
     @User() user: UserAfterAuth, // 인증된 사용자 정보
   ): Promise<CreateVideoResDto> {

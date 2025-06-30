@@ -33,15 +33,16 @@ export class UserService {
 
   /**
    * 특정 사용자 ID로 사용자 정보 조회
-   * 현재는 구현되지 않은 상태입니다.
    *
    * @param id 사용자 ID
-   * @returns 사용자 정보 (미구현)
+   * @returns 사용자 정보 (없으면 null)
+   * @throws NotFoundException 해당 ID의 사용자가 없을 때 예외 발생
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async findOne(id: string) {
-    // TODO: 실제 사용자 조회 로직 구현 필요
-    return 'find user';
+  async findOne(id: string): Promise<User | null> {
+    // User 엔티티에서 해당 ID의 사용자를 조회
+    const user = await this.userRepository.findOneBy({ id });
+    // 사용자가 없으면 null 반환 (실무에서는 NotFoundException을 던질 수도 있음)
+    return user;
   }
 
   /**

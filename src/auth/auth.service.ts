@@ -1,6 +1,50 @@
 /**
  * 인증 관련 비즈니스 로직을 처리하는 서비스
- * 회원가입, 로그인, 토큰 갱신 등의 인증 기능을 제공합니다.
+ *
+ * ===== 🚀 초보자를 위한 인증 서비스 개념 설명 =====
+ *
+ * **인증(Authentication) vs 인가(Authorization):**
+ * - 인증: "당신이 누구인지 확인" (로그인)
+ * - 인가: "당신이 무엇을 할 수 있는지 확인" (권한 체크)
+ *
+ * **JWT 토큰 시스템:**
+ * - Access Token: 짧은 유효기간 (1일), API 요청 시 사용
+ * - Refresh Token: 긴 유효기간 (30일), Access Token 갱신용
+ *
+ * **보안 원칙:**
+ * 1. 비밀번호는 절대 평문 저장 금지 → bcrypt 해시 사용
+ * 2. 토큰은 안전한 곳에 저장 (httpOnly 쿠키 권장)
+ * 3. 민감한 작업은 트랜잭션으로 보호
+ *
+ * ===== 🔐 트랜잭션(Transaction) 완전 이해 가이드 =====
+ *
+ * **트랜잭션이란?**
+ * - 여러 데이터베이스 작업을 하나의 논리적 단위로 묶는 것
+ * - "모두 성공" 또는 "모두 실패" (All or Nothing 원칙)
+ * - 데이터 일관성과 무결성을 보장하는 핵심 메커니즘
+ *
+ * **ACID 원칙:**
+ * 1. **원자성(Atomicity)**: 트랜잭션의 작업들은 모두 성공하거나 모두 실패
+ * 2. **일관성(Consistency)**: 트랜잭션 전후로 데이터 일관성 유지
+ * 3. **격리성(Isolation)**: 동시 실행되는 트랜잭션들은 서로 간섭하지 않음
+ * 4. **지속성(Durability)**: 성공한 트랜잭션 결과는 영구적으로 저장
+ *
+ * **실제 사례로 이해하기:**
+ * ```
+ * 은행 계좌 이체 예시:
+ * 1. A 계좌에서 100만원 차감  ← 트랜잭션 시작
+ * 2. B 계좌에 100만원 추가     ←
+ * 3. 거래 내역 기록           ← 트랜잭션 끝
+ *
+ * 만약 2번에서 에러 발생 시:
+ * → 1번 작업도 함께 취소됨 (롤백)
+ * → 돈이 사라지는 일 방지!
+ * ```
+ *
+ * **회원가입에서 트랜잭션이 필요한 이유:**
+ * 1. 사용자 생성
+ * 2. 토큰 생성 및 저장
+ * → 하나라도 실패하면 모두 취소되어야 함!
  */
 
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
@@ -15,15 +59,58 @@ import * as bcrypt from 'bcrypt';
 @Injectable()
 export class AuthService {
   constructor(
-    private dataSource: DataSource, // 데이터베이스 트랜잭션 관리용
-    private userService: UserService, // 사용자 관련 서비스
-    private jwtService: JwtService, // JWT 토큰 생성/검증 서비스
-    @InjectRepository(RefreshToken) private refreshTokenRepository: Repository<RefreshToken>, // 리프레시 토큰 레포지토리
+    private dataSource: DataSource, // 🔧 트랜잭션 관리의 핵심! QueryRunner 생성용
+    private userService: UserService, // 👤 사용자 관련 서비스
+    private jwtService: JwtService, // 🔑 JWT 토큰 생성/검증 서비스
+    @InjectRepository(RefreshToken) private refreshTokenRepository: Repository<RefreshToken>, // 🔄 리프레시 토큰 저장소
   ) {}
 
   /**
-   * 새로운 사용자 회원가입
-   * 이메일 중복 체크, 비밀번호 해시화, 사용자 생성, 토큰 발급을 트랜잭션으로 처리합니다.
+   * 새로운 사용자 회원가입 - 트랜잭션 적용 예시
+   *
+   * ===== 🎯 이 메서드에서 트랜잭션이 필요한 이유 =====
+   *
+   * **수행하는 작업들:**
+   * 1. 이메일 중복 체크
+   * 2. 비밀번호 해시화
+   * 3. 사용자 정보 데이터베이스 저장    ← 트랜잭션 보호 대상
+   * 4. 액세스 토큰 생성
+   * 5. 리프레시 토큰 생성 및 저장       ← 트랜잭션 보호 대상
+   *
+   * **만약 트랜잭션이 없다면?**
+   * 3번에서 사용자는 생성되었는데 5번에서 에러 발생 시:
+   * → 사용자는 DB에 있지만 리프레시 토큰이 없음
+   * → 로그인 불가능한 좀비 계정 생성!
+   * → 데이터 일관성 파괴 💥
+   *
+   * **트랜잭션의 3단계 흐름:**
+   * ```
+   * 1. BEGIN Transaction    ← 트랜잭션 시작
+   * 2. 여러 DB 작업 수행
+   * 3-A. COMMIT             ← 모든 작업 성공 시 확정
+   * 3-B. ROLLBACK           ← 하나라도 실패 시 모든 작업 취소
+   * ```
+   *
+   * ===== 🔧 TypeORM 트랜잭션 구현 패턴 =====
+   *
+   * **QueryRunner 방식의 장점:**
+   * - 세밀한 트랜잭션 제어 가능
+   * - 복잡한 비즈니스 로직에 적합
+   * - 명시적인 시작/커밋/롤백 관리
+   *
+   * **다른 트랜잭션 방식들:**
+   * ```typescript
+   * // 1. @Transaction 데코레이터 (간단한 경우)
+   * @Transaction()
+   * async simpleMethod(@TransactionManager() manager: EntityManager) {}
+   *
+   * // 2. 람다 함수 방식 (중간 복잡도)
+   * await this.dataSource.transaction(async manager => {
+   *   // 트랜잭션 내 작업들
+   * });
+   *
+   * // 3. QueryRunner 방식 (복잡한 경우) ← 현재 사용 중
+   * ```
    *
    * @param email 사용자 이메일
    * @param password 사용자 비밀번호 (평문)

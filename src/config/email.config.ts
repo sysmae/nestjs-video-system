@@ -31,7 +31,11 @@ import { registerAs } from '@nestjs/config';
  */
 export default registerAs('email', () => ({
   // SMTP 서버 로그인용 이메일 주소
-  user: process.env.EMAIL_USER,
+  // 개발 환경에서는 빈 값이어도 됨 (메일 서비스 비활성화)
+  user: process.env.EMAIL_USER || 'dev@example.com',
   // 이메일 계정의 패스워드 (앱 전용 패스워드 권장)
-  pass: process.env.EMAIL_PASS,
+  // 개발 환경에서는 더미 값 사용
+  pass: process.env.EMAIL_PASS || 'dev-password',
+  // 개발 환경에서 메일 서비스 비활성화 플래그
+  enabled: process.env.EMAIL_ENABLED === 'true' || false,
 }));
