@@ -210,10 +210,57 @@ export class AuthService {
 
   /**
    * 액세스 토큰 생성 (private 메서드)
-   * 사용자 ID를 포함한 JWT 액세스 토큰을 생성합니다. (유효기간: 1일)
    *
-   * @param userId 사용자 ID
-   * @returns JWT 액세스 토큰
+   * ===== 🔑 JWT 액세스 토큰 완전 이해 =====
+   *
+   * **액세스 토큰이란?**
+   * - API 요청 시 사용자 인증을 위한 단기 토큰
+   * - 유효기간이 짧아 보안성이 높음 (일반적으로 15분~1시간)
+   * - 만료되면 리프레시 토큰으로 갱신 필요
+   *
+   * **JWT (JSON Web Token) 구조:**
+   * ```
+   * JWT = Header.Payload.Signature
+   *
+   * Header (헤더):
+   * {
+   *   "alg": "HS256",    // 암호화 알고리즘
+   *   "typ": "JWT"       // 토큰 타입
+   * }
+   *
+   * Payload (페이로드):
+   * {
+   *   "sub": "user-id",      // 사용자 식별자 (Subject)
+   *   "tokenType": "access", // 토큰 타입 구분
+   *   "iat": 1641234567,     // 발급 시간 (Issued At)
+   *   "exp": 1641320967      // 만료 시간 (Expiration)
+   * }
+   *
+   * Signature (서명):
+   * HMACSHA256(
+   *   base64UrlEncode(header) + "." + base64UrlEncode(payload),
+   *   secret
+   * )
+   * ```
+   *
+   * **액세스 토큰 사용 과정:**
+   * ```
+   * 1. 클라이언트 → 서버: API 요청 + Authorization: Bearer <access_token>
+   * 2. 서버: JWT 서명 검증 + 만료 시간 확인
+   * 3. 서버: 토큰에서 사용자 ID 추출 (payload.sub)
+   * 4. 서버: 사용자 정보로 비즈니스 로직 처리
+   * 5. 서버 → 클라이언트: API 응답 반환
+   * ```
+   *
+   * **보안 고려사항:**
+   * ✅ 짧은 유효기간으로 토큰 탈취 위험 최소화
+   * ✅ stateless 설계로 서버 부하 감소
+   * ✅ 서명 검증으로 토큰 위조 방지
+   * ⚠️ XSS 공격 방지를 위해 안전한 저장소 사용 (httpOnly 쿠키 권장)
+   * ⚠️ HTTPS 사용으로 네트워크 상 토큰 노출 방지
+   *
+   * @param userId 사용자 ID (JWT payload.sub에 저장됨)
+   * @returns JWT 액세스 토큰 (유효기간: 1일)
    */
   private genereateAccessToken(userId: string) {
     const payload = { sub: userId, tokenType: 'access' };
@@ -222,10 +269,69 @@ export class AuthService {
 
   /**
    * 리프레시 토큰 생성 (private 메서드)
-   * 사용자 ID를 포함한 JWT 리프레시 토큰을 생성합니다. (유효기간: 30일)
    *
-   * @param userId 사용자 ID
-   * @returns JWT 리프레시 토큰
+   * ===== 🔄 JWT 리프레시 토큰 완전 이해 =====
+   *
+   * **리프레시 토큰이란?**
+   * - 액세스 토큰 갱신을 위한 장기 토큰
+   * - 유효기간이 길어 편의성 제공 (일반적으로 1주~1개월)
+   * - 데이터베이스에 저장되어 서버에서 무효화 가능
+   *
+   * **액세스 토큰 vs 리프레시 토큰 비교:**
+   * ```
+   * 📊 비교표:
+   * ┌─────────────┬─────────────┬─────────────┐
+   * │    항목     │ 액세스 토큰 │ 리프레시 토큰│
+   * ├─────────────┼─────────────┼─────────────┤
+   * │ 유효기간    │ 짧음(1일)   │ 김(30일)    │
+   * │ 사용 목적   │ API 인증    │ 토큰 갱신   │
+   * │ 저장 위치   │ 메모리      │ DB + 클라이언트│
+   * │ 보안 수준   │ 높음        │ 중간        │
+   * │ 네트워크 전송│ 자주       │ 드물게      │
+   * └─────────────┴─────────────┴─────────────┘
+   * ```
+   *
+   * **리프레시 토큰 라이프사이클:**
+   * ```
+   * 1. 로그인 성공 → 액세스 + 리프레시 토큰 발급
+   * 2. API 요청 시 액세스 토큰 사용
+   * 3. 액세스 토큰 만료 → 401 Unauthorized 응답
+   * 4. 클라이언트 → 서버: 리프레시 토큰으로 갱신 요청
+   * 5. 서버: 리프레시 토큰 DB 검증
+   * 6. 서버 → 클라이언트: 새로운 액세스 + 리프레시 토큰 발급
+   * 7. 기존 리프레시 토큰 무효화 (선택적)
+   * ```
+   *
+   * **리프레시 토큰 보안 전략:**
+   * ```
+   * 🔒 Refresh Token Rotation:
+   * - 매번 갱신 시 새로운 리프레시 토큰 발급
+   * - 기존 토큰 즉시 무효화
+   * - 토큰 재사용 공격 방지
+   *
+   * 🕵️ 의심스러운 활동 감지:
+   * - 만료된 리프레시 토큰 사용 시도
+   * - 동시에 여러 기기에서 갱신 요청
+   * - 비정상적인 지역/시간대에서의 요청
+   * ```
+   *
+   * **실제 저장 구조:**
+   * ```sql
+   * -- refresh_tokens 테이블
+   * CREATE TABLE refresh_tokens (
+   *   id UUID PRIMARY KEY,
+   *   user_id UUID NOT NULL,
+   *   token VARCHAR(500) NOT NULL,
+   *   expires_at TIMESTAMP,
+   *   created_at TIMESTAMP DEFAULT NOW(),
+   *   last_used_at TIMESTAMP,
+   *   device_info JSONB,
+   *   is_revoked BOOLEAN DEFAULT FALSE
+   * );
+   * ```
+   *
+   * @param userId 사용자 ID (JWT payload.sub에 저장됨)
+   * @returns JWT 리프레시 토큰 (유효기간: 30일)
    */
   private genereateRefreshToken(userId: string) {
     const payload = { sub: userId, tokenType: 'refresh' };
